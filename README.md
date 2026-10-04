@@ -49,7 +49,7 @@
 
 ## 安装
 
-直接安装 [`releases/`](releases/) 里最新的 `Yingdu-v*.apk`（Android 8.0+，推荐 Android 12+）。
+到 [Releases](https://github.com/codexmasterme/yingdu/releases/latest) 下载最新版的 apk 安装（Android 8.0+，推荐 Android 12+）。
 这是作者自签名的安装包，安装时需要允许"未知来源"。
 
 **第一次使用：**
@@ -63,7 +63,7 @@
 
 ### 方式一：Android Studio（推荐）
 用 Android Studio 打开仓库根目录，等 Gradle 同步完成后 Run 即可（AGP 8.5 / Kotlin 1.9 / compileSdk 34）。
-注意：Studio 用的是它自己的调试签名，和 releases 里的安装包签名不同，覆盖安装前要先卸载。
+注意：Studio 用的是它自己的调试签名，和 Release 里的安装包签名不同，覆盖安装前要先卸载。
 
 ### 方式二：不用 Android SDK 的命令行脚本
 作者开发环境里没有 Android SDK，发布版是用下面这套工具链打包的（`tools/`）：
@@ -106,7 +106,7 @@ app/src/main/assets/fonts/  点阵字体（.ydpf）及 OFL 许可证
 app/src/test/               协议（与实机收发的帧逐字节比对）和排版的单元测试
 tools/                      命令行打包脚本、点阵字体转换脚本、图标生成脚本
 samples/                    测试用小说（原创内容，UTF-8 / GBK 两种编码）
-releases/                   发布的安装包
+releases/                   发布的安装包（下载请到 GitHub 的 Releases 页面）
 ```
 
 ## 致谢与许可
