@@ -63,10 +63,6 @@ class PhoneNotificationService : NotificationListenerService() {
         ReaderService.instance?.let { it.log("通知使用权：已连接，开始转发通知") }
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        runCatching { LiveNotifyLog.onRemoved(this, sbn) }
-    }
-
     /** 系统断开了我们（比如系统回收）：马上请它重新连接。 */
     override fun onListenerDisconnected() {
         connected = false
@@ -77,8 +73,6 @@ class PhoneNotificationService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val pkg = sbn.packageName
         if (pkg == packageName) return
-        // 外卖、打车的实况通知：先全部记下来（测试），再按原来的规则决定转不转发
-        runCatching { LiveNotifyLog.onPosted(this, sbn) }
         val n = sbn.notification ?: return
         val ex = n.extras
         // 标题原样显示（QQ 之类后面的「(3条新消息)」是未读数，要留着）；去掉未读数的版本只用来认是不是群聊

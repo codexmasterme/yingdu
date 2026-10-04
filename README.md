@@ -100,7 +100,6 @@ app/src/main/java/io/github/yingdu/
   Memory.kt           全天记忆：录音引擎（只用眼镜麦克风）、按天存文字、转完删录音、Ogg → WAV、记忆检索（有单元测试）
   Speaker.kt          分辨自己和别人（音量、音高、低频比例）
   Captions.kt         实时字幕
-  LiveNotify.kt       外卖、打车这类实况通知的记录（测试功能）
   MemoryAi.kt         转文字（OpenAI 兼容）、每天总结（Claude Messages API / OpenAI 兼容）
   Stores.kt / Steps.kt / Dashboard.kt / PhoneNotifications.kt / OfficialApp.kt
 app/src/main/assets/fonts/  点阵字体（.ydpf）及 OFL 许可证
@@ -118,4 +117,9 @@ releases/                   发布的安装包
 - 全天记忆：转文字和总结由用户自己选择服务、填自己的 API Key；录音转好文字就删，手机上只留文字。
 - 景点介绍：默认关闭；打开后查询时把当前坐标发给你选的地图服务（高德或 Google）、把景点名发给百度百科 / 维基百科，不发给其他地方。
 - 数据来源：雅虎财经（行情、搜索，非官方接口）、微牛 Webull（美股盘前 / 盘后 / 夜盘，非官方接口）、Open-Meteo（天气、城市搜索）、BigDataCloud（反向地理编码）。
-- 萤读自身代码的开源许可证由仓库所有者决定。
+
+## 许可证
+
+萤读以 [Apache License 2.0](LICENSE) 开源：可以自由使用、修改、再发布（包括商用），
+再发布时保留 `LICENSE` 和 `NOTICE`、注明改动即可。眼镜点阵字体按 SIL OFL 1.1 授权（见 `app/src/main/assets/fonts/`）。
+「Nimo」是其所有者的商标，萤读是非官方项目，与厂商无关。

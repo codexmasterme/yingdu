@@ -2436,8 +2436,8 @@ class MainActivity : Activity(), ReaderService.UiListener {
     private fun buildLicenses(): View {
         val page = vbox()
         val files = listOf(
-            "萤读用到的开源项目" to "licenses/NOTICE.txt",
-            "Apache License 2.0（MentraOS）" to "licenses/Apache-2.0.txt",
+            "萤读和用到的开源项目" to "licenses/NOTICE.txt",
+            "Apache License 2.0（萤读、MentraOS）" to "licenses/Apache-2.0.txt",
             "SIL OFL 1.1（GNU Unifont）" to "fonts/OFL-Unifont.txt",
             "SIL OFL 1.1（Fusion Pixel Font）" to "fonts/OFL-Fusion-Pixel.txt",
         )
@@ -2463,7 +2463,7 @@ class MainActivity : Activity(), ReaderService.UiListener {
         legal.addRow(Row("隐私说明", chevron = true) { showLegal("隐私说明", Legal.PRIVACY) }.root)
         legal.addRow(Row("开源许可", chevron = true) { openSub(Sub.LICENSES) }.root)
         page.addView(legal)
-        page.addView(note("协议参考开源项目 MentraOS（Apache 2.0）。Opus 编解码用 Concentus（BSD）。" +
+        page.addView(note("萤读以 Apache License 2.0 开源（github.com/codexmasterme/yingdu）。协议参考开源项目 MentraOS（Apache 2.0）。Opus 编解码用 Concentus（BSD）。" +
             "眼镜点阵字体基于 GNU Unifont 和 Fusion Pixel Font（SIL OFL 1.1）。许可全文见「开源许可」。\n" +
             "数据来源：行情 雅虎财经、腾讯证券、Robinhood、微牛；天气 Open-Meteo（CC BY 4.0）；反向地理编码 BigDataCloud；" +
             "景点 高德地图、Google 地图；景点介绍 百度百科、维基百科（CC BY-SA 4.0）。"))
@@ -2902,25 +2902,6 @@ class MainActivity : Activity(), ReaderService.UiListener {
         }.root)
         page.addView(top)
 
-        // 外卖、打车的实况通知（测试）：记下所有字段，发给开发者看怎么做成看板卡片和提醒
-        page.addView(section("外卖、打车（测试）"))
-        val live = listBox()
-        val liveToggle = Toggle { LiveNotifyLog.setEnabled(this, !LiveNotifyLog.enabled(this)); refreshNow() }
-        live.addRow(Row("记录实况通知", "美团、饿了么、滴滴、高德等的进行中通知").apply { accessory(liveToggle.root) }.root)
-        val liveShare = Row("发送记录", chevron = true) {
-            val t = LiveNotifyLog.tail(this)
-            if (t.isEmpty()) { toast("还没有记录：点一单外卖或打一次车再来"); return@Row }
-            val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, "萤读 实况通知记录").putExtra(Intent.EXTRA_TEXT, t)
-            startActivity(Intent.createChooser(i, "发送实况通知记录"))
-        }
-        live.addRow(liveShare.root)
-        live.addRow(Row("清空记录") {
-            AlertDialog.Builder(this).setMessage("清空实况通知记录？").setPositiveButton("清空") { _, _ -> LiveNotifyLog.clear(this); refreshNow() }
-                .setNegativeButton("取消", null).show()
-        }.root)
-        page.addView(live)
-        page.addView(note("只记在手机上，点「发送记录」才会发出去。记录里有订单状态、地址、车牌这类信息，发之前可以先看一眼。"))
-
         page.addView(section("哪些 app、什么时候转发"))
         page.addView(note("每个 app 选一个时段；再点一下已选的就是不转发。"))
         val filter = field("搜索 app")
@@ -2959,9 +2940,6 @@ class MainActivity : Activity(), ReaderService.UiListener {
         }
         filter.addTextChangedListener(onEdit { rebuild() })
         onUpdate(Sub.NOTIFY) {
-            liveToggle.set(LiveNotifyLog.enabled(this))
-            val lf = LiveNotifyLog.file(this)
-            liveShare.value(if (lf.exists()) "%.1f KB".format(lf.length() / 1024.0) else "还没有")
             onToggle.set(NotifyPrefs.enabled(this))
             callToggle.set(NotifyPrefs.callAlert(this))
             perm.value(when {

@@ -1,3 +1,12 @@
+萤读 Yingdu
+Copyright 2026 codexmasterme
+
+萤读以 Apache License 2.0 授权（全文见 LICENSE）。
+眼镜用的点阵字体（app/src/main/assets/fonts/*.ydpf）由 GNU Unifont 和 Fusion Pixel Font 转换而来，
+仍按 SIL Open Font License 1.1 授权，许可证见同一文件夹。
+萤读包含下列第三方代码：
+
+------------------------------------------------------------------------
 NimoProtocol.kt 与 NimoClient.kt 中的协议常量、帧编解码和连接流程，
 移植自 MentraOS 项目（https://github.com/Mentra-Community/MentraOS）
 提交 2c91f97be 中的 Nimo 驱动，原代码以 Apache License 2.0 授权。

@@ -291,7 +291,7 @@ object Sights {
 
 /** 景点介绍用到的联网（后台线程里调用）。 */
 object SightsNet {
-    private const val UA = "Yingdu/1.0.0 (+https://github.com/codexmasterme/yingdu; Nimo smart glasses companion; Android)"
+    private const val UA = "Yingdu/1.0.1 (+https://github.com/codexmasterme/yingdu; Nimo smart glasses companion; Android)"
     /** 找景点用哪家：1 高德地图，2 Google 地图（0 是以前的 OpenStreetMap，已经去掉，按高德算）。 */
     const val SRC_AMAP = 1
     const val SRC_GOOGLE = 2
