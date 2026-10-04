@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+# 签名密钥绝不提交
+*.pem
+*.jks
+*.keystore
+__pycache__/

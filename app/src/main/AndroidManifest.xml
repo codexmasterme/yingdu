@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 仪表盘：获取行情和天气 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 看板：确定城市和天气；景点介绍：精确位置找附近 3 公里的景点 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- 日程：读取手机日历 -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- 步数：手机计步器 / Health Connect -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+
+    <!-- 安卓 11 起需要声明要访问的其它 app：桌面上的 app（通知来源、官方 app） -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <!-- Android 11 及以下 -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- Android 12 起：连接已配对设备只需要这一项，不需要定位和扫描权限 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- 不要手机录音权限：全天记忆和实时字幕只用眼镜麦克风（声音经蓝牙传过来） -->
+    <!-- 番茄钟：计时期间手机休眠也能按时提醒（到点就释放） -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 「我的 → 后台运行」：请系统别对萤读做电池优化（后台常驻，通知和重连不断） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- usesCleartextTraffic：网络卡片要能访问局域网里 http:// 的服务（例如 Home Assistant） -->
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="萤读"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Health Connect 要求提供"为什么需要健康数据"的说明入口，这里直接打开主界面 -->
+        <activity-alias
+            android:name=".HealthRationale"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- 读取手机通知：新消息弹窗 -->
+        <service
+            android:name=".PhoneNotificationService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".ReaderService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|location" />
+    </application>
+</manifest>
