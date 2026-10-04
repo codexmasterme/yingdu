@@ -202,7 +202,7 @@ class ReaderService : Service(), NimoListener, AppHost {
         get() = prefs.getString("dashCity", "") ?: ""
         private set(v) = prefs.edit().putString("dashCity", v).apply()
     var dashStocks: String
-        get() = prefs.getString("dashStocks", "NBIS, MU, NVDA, 7203.T, ^N225") ?: ""
+        get() = prefs.getString("dashStocks", "") ?: ""
         private set(v) = prefs.edit().putString("dashStocks", v).apply()
     var dashTodos: String
         get() = prefs.getString("dashTodos", "") ?: ""
