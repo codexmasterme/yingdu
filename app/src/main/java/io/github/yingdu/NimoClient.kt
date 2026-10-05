@@ -24,6 +24,8 @@ enum class DisplayPage { PROMPTER, NOTE }
 interface NimoListener {
     /** 眼镜当前的开关设置（抬头显示、息屏模式、自动亮度），连接后读取、修改后回报。 */
     fun onGlassesSetting(key: Int, on: Boolean) {}
+    /** 眼镜两次拒绝打开提词器页面（状态 7：设备忙，多半是官方 app 的提词器会话还没结束）。 */
+    fun onPrompterRefused() {}
     /** 眼镜现在的亮度档位（0..16，连接时读到的）。 */
     fun onBrightnessLevel(level: Int) {}
     /** 眼镜上报的自动亮度档位（0..16）。 */
@@ -814,7 +816,11 @@ class NimoClient(private val context: Context, private val listener: NimoListene
     /** 这次打开页面已经抢发过图了（超时后那次正式发送就当作补发，不再额外补发）。 */
     private var earlySent = false
 
+    /** 这次连接里提词器被拒后已经退出重试过一次。 */
+    private var prompterRetried = false
+
     private fun onAppEntered(appId: Int) {
+        if (appId == NimoProtocol.APP_ID_PROMPTER) prompterRetried = false
         enterTimeout?.let { main.removeCallbacks(it) }
         enterTimeout = null
         enteringApp = null
@@ -1007,6 +1013,26 @@ class NimoClient(private val context: Context, private val listener: NimoListene
     private fun handleResponse(cmd: Int, key: Int, status: Int, data: ByteArray) {
         // cmd=7 key=9：眼镜把当前页面收到的镜腿操作转发给手机，数据就是操作代码
         // （实测：提词器里右单击 → 03；导航页长按右镜腿 → 05，此时眼镜已经退出页面）。
+        // 打开页面被拒（状态 7 = 未就绪 / 设备忙；官方 app 的状态码表）：提词器先退出再试一次，还不行就交给服务改用图片显示
+        if (cmd == NimoProtocol.CMD_CONTROL_INSTRUCTION && key == NimoProtocol.CTRL_ENTER_APP && status == NimoProtocol.STATUS_BUSY) {
+            val appId = data.firstOrNull()?.toInt()?.and(0xFF)
+            log("眼镜拒绝打开页面 ${appId ?: "?"}（状态 7：设备忙 / 未就绪）")
+            if (appId == NimoProtocol.APP_ID_PROMPTER && enteringApp == NimoProtocol.APP_ID_PROMPTER) {
+                enterTimeout?.let { main.removeCallbacks(it) }; enterTimeout = null
+                if (!prompterRetried) {
+                    prompterRetried = true
+                    log("提词器可能还被别的会话占着：先退出提词器，再打开一次")
+                    sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_CONTROL_INSTRUCTION, NimoProtocol.CTRL_QUIT_APP,
+                        byteArrayOf(NimoProtocol.APP_ID_PROMPTER.toByte())))
+                    main.postDelayed({ if (enteringApp == NimoProtocol.APP_ID_PROMPTER && state == LinkState.READY) enterApp(NimoProtocol.APP_ID_PROMPTER) }, 700)
+                } else {
+                    enteringApp = null
+                    if (blanked) unblankScreen()
+                    listener.onPrompterRefused()
+                }
+            }
+            return
+        }
         if (cmd == NimoProtocol.CMD_CONTROL_INSTRUCTION && key == 9) {
             when (status) {
                 NimoProtocol.INPUT_LONG_PRESS_RIGHT -> if (enteredApp == NimoProtocol.APP_ID_NAV) onNavAction05()

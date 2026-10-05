@@ -191,12 +191,12 @@ class MainActivity : Activity(), ReaderService.UiListener {
         super.onStop()
     }
 
-    /** 阅读时音量键翻页（萤读在前台时系统先把按键交给这里；在后台由服务里的媒体会话接）。 */
+    /** 音量键翻页：只在萤读的阅读页面开着时（和官方提词器一样）；别的页面、锁屏、后台照常调音量。 */
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         val code = event.keyCode
         if (code == android.view.KeyEvent.KEYCODE_VOLUME_UP || code == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
             val s = service
-            if (s != null && s.volumeKeysActive) {
+            if (s != null && sub == Sub.READ && s.volumeKeysActive) {
                 if (event.action == android.view.KeyEvent.ACTION_DOWN) s.volumeKey(code == android.view.KeyEvent.KEYCODE_VOLUME_UP, repeat = event.repeatCount > 0)
                 return true
             }
@@ -1693,7 +1693,7 @@ class MainActivity : Activity(), ReaderService.UiListener {
         val vc = card()
         val volSeg = Seg(listOf("关", "上一页 / 下一页", "上一行 / 下一行")) { i -> service?.volumeKeys = i; refreshNow() }
         vc.addView(volSeg.root)
-        vc.addView(hint("音量 + 往前，音量 − 往后，按住连续翻。手机锁屏、萤读在后台时也能用；在阅读时音量键不再调音量，切到看板或收起阅读就恢复。"), lp(top = 8))
+        vc.addView(hint("在萤读的阅读页面里：音量 + 往前，音量 − 往后，按住连续翻（和官方提词器一样，只在阅读页面开着时有效，锁屏或切到别处照常调音量）。"), lp(top = 8))
         page.addView(vc)
         val l = listBox()
         val progToggle = Toggle { service?.let { it.showProgress = !it.showProgress }; refreshNow() }

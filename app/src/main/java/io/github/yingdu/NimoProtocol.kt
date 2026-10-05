@@ -24,6 +24,8 @@ object NimoProtocol {
     const val FRAME_MAGIC = 0xBF
     const val STATUS_ERR = 0x01
     const val STATUS_ACK = 0x02
+    /** 眼镜回复的状态 7：未就绪 / 设备忙（两条镜腿没连上、对端没就绪，或者页面被别的会话占着）。 */
+    const val STATUS_BUSY = 0x07
 
     const val CMD_GET_PARAMETER = 0x02
     const val CMD_SET_PARAMETER = 0x03

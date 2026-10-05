@@ -111,6 +111,14 @@ class ReaderService : Service(), NimoListener, AppHost {
                 else prefs.getInt("linesPerPage$layoutSuffix", if (displayPage == DisplayPage.NOTE) 3 else 5)
         private set(v) = prefs.edit().putInt("linesPerPage$layoutSuffix", v).apply()
 
+    /** 眼镜一直拒绝打开提词器页面：阅读改用图片显示（和看板同一个页面，不受提词器影响）。 */
+    override fun onPrompterRefused() {
+        log("眼镜不让打开提词器页面（设备忙），阅读改用图片显示。重启眼镜后可以在「阅读显示」里改回提词器文字")
+        if (!readerAsImage) toggleReaderImage()
+        if (appMode == AppMode.READER) pushPage()
+        notifyUi()
+    }
+
     fun toggleReaderImage() {
         readerAsImage = !readerAsImage
         log(if (readerAsImage) "阅读改用图片显示" else "阅读改用文字页面显示")
@@ -967,7 +975,6 @@ class ReaderService : Service(), NimoListener, AppHost {
         main.removeCallbacks(dailyTimeSync)
         instance = null
         activeApp?.onClose()
-        volSession?.let { runCatching { it.release() } }; volSession = null
         steps.stop()
         main.removeCallbacks(dashLive); main.removeCallbacks(stockLive)
         memEngine.stop()
@@ -1144,10 +1151,13 @@ class ReaderService : Service(), NimoListener, AppHost {
 
     // ---------- 音量键翻页（阅读） ----------
 
-    /** 音量键翻页：0 关，1 上一页 / 下一页，2 上一行 / 下一行（音量 + 往前，音量 − 往后；按住连续翻，和官方提词器一样）。 */
+    /**
+     * 音量键翻页：0 关，1 上一页 / 下一页，2 上一行 / 下一行（音量 + 往前，音量 − 往后；按住连续翻，和官方提词器一样）。
+     * 只在萤读的阅读页面开着（在前台）时有效；锁屏、后台、别的页面里音量键照常调音量。
+     */
     var volumeKeys: Int
         get() = prefs.getInt("volumeKeys", 0)
-        set(v) { prefs.edit().putInt("volumeKeys", v).apply(); updateVolumeSession(); notifyUi() }
+        set(v) { prefs.edit().putInt("volumeKeys", v).apply(); notifyUi() }
 
     /** 现在音量键用来翻页吗（在阅读、开了这个设置、眼镜连着）。 */
     val volumeKeysActive: Boolean get() = volumeKeys != 0 && appMode == AppMode.READER && paginator != null && linkState == LinkState.READY
@@ -1166,29 +1176,6 @@ class ReaderService : Service(), NimoListener, AppHost {
         if (glassesPaused) resumeGlasses()
         moveBy(if (up) -step else step)
         return true
-    }
-
-    /**
-     * 手机锁屏、萤读在后台时也能用音量键：阅读时开一个「远程音量」的媒体会话，系统把音量键交给它（不改手机音量）。
-     * 不在阅读、关了设置时马上关掉，音量键恢复正常。
-     */
-    private var volSession: android.media.session.MediaSession? = null
-
-    private fun updateVolumeSession() {
-        val want = volumeKeysActive
-        if (want == (volSession != null)) return
-        if (!want) { volSession?.let { runCatching { it.isActive = false; it.release() } }; volSession = null; log("音量键翻页：停"); return }
-        volSession = runCatching {
-            android.media.session.MediaSession(this, "yingdu-volume-keys").apply {
-                setPlaybackToRemote(object : android.media.VolumeProvider(VOLUME_CONTROL_RELATIVE, 100, 50) {
-                    override fun onAdjustVolume(direction: Int) { if (direction != 0) main.post { volumeKey(direction > 0, repeat = true) } }
-                })
-                setPlaybackState(android.media.session.PlaybackState.Builder()
-                    .setState(android.media.session.PlaybackState.STATE_PLAYING, 0, 1f).build())
-                isActive = true
-            }
-        }.onFailure { log("音量键翻页开不了：${it.message}") }.getOrNull()
-        if (volSession != null) log("音量键翻页：开（" + (if (volumeKeys == 1) "翻页" else "翻行") + "）")
     }
 
     fun nextPage() { moveBy(paginator?.rows ?: return) }
@@ -2239,7 +2226,6 @@ class ReaderService : Service(), NimoListener, AppHost {
 
     private var lastNotifText = ""
     private fun notifyUi() {
-        updateVolumeSession()
         uiListener?.onReaderChanged()
         // 通知里显示页码；只在内容变化时更新，避免频繁刷新
         val t = "$pageNumber/$autoFlip/$glassesPaused/$appMode/$linkState/${activeApp?.status()}"
