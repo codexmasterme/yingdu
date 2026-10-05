@@ -35,6 +35,8 @@ class ReaderService : Service(), NimoListener, AppHost {
     enum class AppMode { READER, DASHBOARD, APP }
 
     companion object {
+        /** 自动亮度平滑过渡用多久（毫秒；官方 app 是 4 秒）。 */
+        const val BRIGHTNESS_FADE_MS = 4000L
         const val HIDE_SCREEN_OFF = 1
         /** 关屏收起时来通知：从屏幕亮起算，亮多久再关回去。 */
         const val NOTIFY_LIT_MS = 5_000L
@@ -965,6 +967,7 @@ class ReaderService : Service(), NimoListener, AppHost {
         main.removeCallbacks(dailyTimeSync)
         instance = null
         activeApp?.onClose()
+        volSession?.let { runCatching { it.release() } }; volSession = null
         steps.stop()
         main.removeCallbacks(dashLive); main.removeCallbacks(stockLive)
         memEngine.stop()
@@ -1012,8 +1015,58 @@ class ReaderService : Service(), NimoListener, AppHost {
         stopSelf()
     }
 
-    /** 手动调亮度时眼镜会关掉自动亮度。 */
-    fun setBrightness(percent: Int) { client.setBrightness(percent); autoBrightness = false; notifyUi() }
+    /**
+     * 眼镜现在的亮度（0..100）：连接时从眼镜读，自动亮度过渡、手动调时跟着更新（和官方 app 一样，用来显示和算偏移）。
+     */
+    var brightnessPct: Int
+        get() = prefs.getInt("brightnessPct", 6)
+        private set(v) = prefs.edit().putInt("brightnessPct", v.coerceIn(0, 100)).apply()
+
+    private fun pctOf(level: Int) = Math.round(level * 100.0 / NimoProtocol.MAX_BRIGHTNESS_LEVEL).toInt()
+
+    /** 调亮度：和官方一样，开着自动亮度时不关它，只发偏移。 */
+    fun setBrightness(percent: Int) {
+        if (linkState != LinkState.READY) return
+        main.removeCallbacks(brightnessStep); brightnessAnim = null
+        client.setBrightness(percent, brightnessPct, autoBrightness == true)
+        brightnessPct = percent
+        notifyUi()
+    }
+
+    override fun onBrightnessLevel(level: Int) {
+        brightnessPct = pctOf(level)
+        notifyUi()
+    }
+
+    /** 自动亮度平滑过渡：(开始的百分比, 目标百分比, 开始时间)。和官方一样 4 秒、50 毫秒一步、先快后慢。 */
+    private var brightnessAnim: Triple<Double, Double, Long>? = null
+    private var brightnessSentLevel = -1
+    private val brightnessStep: Runnable = object : Runnable {
+        override fun run() {
+            val (from, to, start) = brightnessAnim ?: return
+            val t = ((android.os.SystemClock.uptimeMillis() - start) / BRIGHTNESS_FADE_MS.toDouble()).coerceIn(0.0, 1.0)
+            val e = 1 - (1 - t) * (1 - t)
+            val pct = from + (to - from) * e
+            val lvl = (pct / 100.0 * NimoProtocol.MAX_BRIGHTNESS_LEVEL).toInt()
+            if (lvl != brightnessSentLevel) { brightnessSentLevel = lvl; client.setBrightnessLevel(lvl) }
+            brightnessPct = Math.round(pct).toInt()
+            if (t >= 1.0) { brightnessAnim = null; notifyUi(); return }
+            main.postDelayed(this, 50)
+        }
+    }
+
+    /** 眼镜按环境光算出了新的亮度：开着自动亮度时平滑地设过去；关着就不管（官方也是忽略）。 */
+    override fun onAutoBrightnessLevel(level: Int) {
+        if (autoBrightness != true || linkState != LinkState.READY) return
+        val target = level * 100.0 / NimoProtocol.MAX_BRIGHTNESS_LEVEL
+        val cur = brightnessPct.toDouble()
+        if (Math.abs(target - cur) < 0.5) return
+        log("自动亮度：${cur.toInt()}% → ${target.toInt()}%（$level 档）")
+        main.removeCallbacks(brightnessStep)
+        brightnessSentLevel = NimoClient.brightnessLevel(brightnessPct)
+        brightnessAnim = Triple(cur, target, android.os.SystemClock.uptimeMillis())
+        main.post(brightnessStep)
+    }
 
     fun toggleDisplayPage() {
         displayPage = if (displayPage == DisplayPage.PROMPTER) DisplayPage.NOTE else DisplayPage.PROMPTER
@@ -1087,6 +1140,55 @@ class ReaderService : Service(), NimoListener, AppHost {
     fun currentChapterTitle(): String {
         val b = book ?: return ""
         return b.chapters.getOrNull(b.chapterIndexAt(currentOffset()))?.title ?: ""
+    }
+
+    // ---------- 音量键翻页（阅读） ----------
+
+    /** 音量键翻页：0 关，1 上一页 / 下一页，2 上一行 / 下一行（音量 + 往前，音量 − 往后；按住连续翻，和官方提词器一样）。 */
+    var volumeKeys: Int
+        get() = prefs.getInt("volumeKeys", 0)
+        set(v) { prefs.edit().putInt("volumeKeys", v).apply(); updateVolumeSession(); notifyUi() }
+
+    /** 现在音量键用来翻页吗（在阅读、开了这个设置、眼镜连着）。 */
+    val volumeKeysActive: Boolean get() = volumeKeys != 0 && appMode == AppMode.READER && paginator != null && linkState == LinkState.READY
+
+    private var lastVolumeKeyAt = 0L
+
+    /** 按了音量键（up = 音量 +）：在翻页就翻、返回 true；不翻页返回 false（照常调音量）。 */
+    fun volumeKey(up: Boolean, repeat: Boolean = false): Boolean {
+        if (!volumeKeysActive) return false
+        val now = android.os.SystemClock.uptimeMillis()
+        // 按住时系统连发很快：翻页 0.35 秒一次，翻行 0.15 秒一次
+        if (repeat && now - lastVolumeKeyAt < (if (volumeKeys == 1) 350 else 150)) return true
+        lastVolumeKeyAt = now
+        val rows = paginator?.rows ?: return true
+        val step = if (volumeKeys == 1) rows else 1
+        if (glassesPaused) resumeGlasses()
+        moveBy(if (up) -step else step)
+        return true
+    }
+
+    /**
+     * 手机锁屏、萤读在后台时也能用音量键：阅读时开一个「远程音量」的媒体会话，系统把音量键交给它（不改手机音量）。
+     * 不在阅读、关了设置时马上关掉，音量键恢复正常。
+     */
+    private var volSession: android.media.session.MediaSession? = null
+
+    private fun updateVolumeSession() {
+        val want = volumeKeysActive
+        if (want == (volSession != null)) return
+        if (!want) { volSession?.let { runCatching { it.isActive = false; it.release() } }; volSession = null; log("音量键翻页：停"); return }
+        volSession = runCatching {
+            android.media.session.MediaSession(this, "yingdu-volume-keys").apply {
+                setPlaybackToRemote(object : android.media.VolumeProvider(VOLUME_CONTROL_RELATIVE, 100, 50) {
+                    override fun onAdjustVolume(direction: Int) { if (direction != 0) main.post { volumeKey(direction > 0, repeat = true) } }
+                })
+                setPlaybackState(android.media.session.PlaybackState.Builder()
+                    .setState(android.media.session.PlaybackState.STATE_PLAYING, 0, 1f).build())
+                isActive = true
+            }
+        }.onFailure { log("音量键翻页开不了：${it.message}") }.getOrNull()
+        if (volSession != null) log("音量键翻页：开（" + (if (volumeKeys == 1) "翻页" else "翻行") + "）")
     }
 
     fun nextPage() { moveBy(paginator?.rows ?: return) }
@@ -1812,7 +1914,7 @@ class ReaderService : Service(), NimoListener, AppHost {
         when (key) {
             NimoProtocol.SET_HEADUP_DISPLAY -> headUpDisplay = on
             NimoProtocol.SET_DISPLAY_OFF -> displayOff = on
-            NimoProtocol.SET_AUTO_BRIGHTNESS -> autoBrightness = on
+            NimoProtocol.SET_AUTO_BRIGHTNESS -> { autoBrightness = on; if (!on) { main.removeCallbacks(brightnessStep); brightnessAnim = null } }
         }
         notifyUi()
     }
@@ -2137,6 +2239,7 @@ class ReaderService : Service(), NimoListener, AppHost {
 
     private var lastNotifText = ""
     private fun notifyUi() {
+        updateVolumeSession()
         uiListener?.onReaderChanged()
         // 通知里显示页码；只在内容变化时更新，避免频繁刷新
         val t = "$pageNumber/$autoFlip/$glassesPaused/$appMode/$linkState/${activeApp?.status()}"

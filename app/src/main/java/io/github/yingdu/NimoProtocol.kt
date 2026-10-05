@@ -39,6 +39,8 @@ object NimoProtocol {
     const val SET_TIME = 0x01
     const val SET_BRIGHTNESS = 0x02
     const val SET_AUTO_BRIGHTNESS = 0x0E
+    /** 亮度偏移（自动亮度开着时手动调亮 / 调暗，有符号一字节 −128..127；官方 app 里的 set_brightness_offset）。 */
+    const val SET_BRIGHTNESS_OFFSET = 0x15
     // 以下三项实机确认过（2026-09-27）：读取用 cmd=2，设置用 cmd=3，值 1 开 0 关
     const val SET_DISPLAY_OFF = 0x0F      // 息屏模式
     const val SET_HEADUP_DISPLAY = 0x0D   // 抬头显示：抬头亮屏、低头息屏，由眼镜自己判断
@@ -56,6 +58,8 @@ object NimoProtocol {
     const val REPORT_BUSINESS = 0x04
 
     const val BUSINESS_HEARTBEAT = 0x03
+    /** 自动亮度：眼镜按光线传感器算出的亮度档位（0..16，含亮度偏移），开着自动亮度时由手机平滑地设过去（官方 app 就是这样）。 */
+    const val BUSINESS_AUTO_BRIGHTNESS = 0x04
     const val BUSINESS_BATTERY = 0x05
 
     // v3.5 曾以为写反了，实测（用户描述 + v3.5 日志）01 确实是抬头、02 是低头

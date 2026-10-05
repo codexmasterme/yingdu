@@ -50,3 +50,40 @@ class AudioCleanTest {
         assertTrue(20 * Math.log10(rms(y, 2000, 14_000) / rms(x, 2000, 14_000)) < -10)
     }
 }
+
+class BrightnessTest {
+    @Test fun levelsLikeTheOfficialApp() {
+        // 0..100% → 0..16 档，舍去小数
+        org.junit.Assert.assertEquals(0, NimoClient.brightnessLevel(0)); org.junit.Assert.assertEquals(16, NimoClient.brightnessLevel(100))
+        org.junit.Assert.assertEquals(9, NimoClient.brightnessLevel(60)); org.junit.Assert.assertEquals(15, NimoClient.brightnessLevel(99))
+        org.junit.Assert.assertEquals(0x15, NimoProtocol.SET_BRIGHTNESS_OFFSET)
+    }
+}
+
+class UpdaterTest {
+    @Test fun comparesVersions() {
+        org.junit.Assert.assertTrue(Updater.newer("1.0.3", "1.0.2"))
+        org.junit.Assert.assertTrue(Updater.newer("v1.0.10", "1.0.9"))
+        org.junit.Assert.assertTrue(Updater.newer("1.1", "1.0.9"))
+        org.junit.Assert.assertFalse(Updater.newer("1.0.2", "1.0.2"))
+        org.junit.Assert.assertFalse(Updater.newer("1.0.2", "1.0.3"))
+        org.junit.Assert.assertFalse(Updater.newer("1.0", "1.0.0"))
+    }
+
+    @Test fun parsesGithubRelease() {
+        val sha = "7f49cdd55c8405684d02642ce828d273bace32ae017f1f42270667b7cf82d8bd"
+        val json = """{"tag_name":"v1.0.3","draft":false,"prerelease":false,
+            "body":"## 更新\n- **阅读**：音量键翻页\n- 亮度修复\n\nSHA-256：`$sha`\n\n> 非官方项目",
+            "assets":[{"name":"Yingdu-v1.0.3.apk","browser_download_url":"https://github.com/codexmasterme/yingdu/releases/download/v1.0.3/Yingdu-v1.0.3.apk"}]}"""
+        val r = Updater.parseGithub(json)!!
+        org.junit.Assert.assertEquals("1.0.3", r.version)
+        org.junit.Assert.assertEquals("Yingdu-v1.0.3.apk", r.apkName)
+        org.junit.Assert.assertEquals(sha, r.sha256)
+        org.junit.Assert.assertEquals("https://cdn.jsdelivr.net/gh/codexmasterme/yingdu@v1.0.3/releases/Yingdu-v1.0.3.apk", r.urls[0])
+        org.junit.Assert.assertEquals("https://github.com/codexmasterme/yingdu/releases/download/v1.0.3/Yingdu-v1.0.3.apk", r.urls[1])
+        org.junit.Assert.assertEquals("更新\n- 阅读：音量键翻页\n- 亮度修复\n\n> 非官方项目", r.notes)
+        org.junit.Assert.assertNull(Updater.parseGithub("""{"tag_name":"v2.0.0","draft":true}"""))
+        val u = Updater.parseUpdateJson("""{"version":"1.0.4","apk":"releases/Yingdu-v1.0.4.apk","sha256":"$sha","notes":"修复"}""")!!
+        org.junit.Assert.assertEquals("Yingdu-v1.0.4.apk", u.apkName); org.junit.Assert.assertEquals(sha, u.sha256)
+    }
+}

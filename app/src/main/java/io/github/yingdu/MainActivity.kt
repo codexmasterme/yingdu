@@ -42,7 +42,10 @@ import android.widget.Toast
  */
 class MainActivity : Activity(), ReaderService.UiListener {
 
+
     companion object {
+        /** 系统安装器装完（或要用户确认）时回到这里。 */
+        const val ACTION_INSTALL_STATUS = "io.github.yingdu.INSTALL_STATUS"
         private const val REQ_OPEN = 1
         private const val REQ_PERMS = 2
 
@@ -174,6 +177,8 @@ class MainActivity : Activity(), ReaderService.UiListener {
     override fun onStart() {
         super.onStart()
         bindService(Intent(this, ReaderService::class.java), conn, Context.BIND_AUTO_CREATE)
+        // 每天看一次有没有新版（同意了免责说明之后）
+        uiHandler.postDelayed({ if (legalAgreed()) checkUpdate(manual = false) }, 3_000)
         // 通知使用权授权了但系统没连上（更新萤读后常见）：给系统 5 秒自己连，还没连上就请它重连
         uiHandler.postDelayed({ PhoneNotificationService.rebindIfNeeded(this, "打开萤读") }, 5_000)
     }
@@ -184,6 +189,19 @@ class MainActivity : Activity(), ReaderService.UiListener {
         unbindService(conn)
         service = null
         super.onStop()
+    }
+
+    /** 阅读时音量键翻页（萤读在前台时系统先把按键交给这里；在后台由服务里的媒体会话接）。 */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val code = event.keyCode
+        if (code == android.view.KeyEvent.KEYCODE_VOLUME_UP || code == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val s = service
+            if (s != null && s.volumeKeysActive) {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) s.volumeKey(code == android.view.KeyEvent.KEYCODE_VOLUME_UP, repeat = event.repeatCount > 0)
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     /** 记下手指按下的位置：点进子页面时，新页面从这里放大出来。 */
@@ -948,8 +966,9 @@ class MainActivity : Activity(), ReaderService.UiListener {
         quick.addView(tileRow(dispOff, headUp, autoBr, smaller, larger))
         val br = hbox().apply { layoutParams = lp(top = 8) }
         br.addView(text("☼", 12f, SUB))
-        br.addView(SeekBar(this).apply {
-            max = 100; progress = 60
+        val brBar = SeekBar(this)
+        br.addView(brBar.apply {
+            max = 100; progress = service?.brightnessPct ?: 60
             progressTintList = ColorStateList.valueOf(TAN); thumbTintList = ColorStateList.valueOf(TAN)
             progressBackgroundTintList = ColorStateList.valueOf(TRACK)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -1026,6 +1045,7 @@ class MainActivity : Activity(), ReaderService.UiListener {
             dispOff.setActive(s.displayOff == true)
             headUp.setActive(s.headUpDisplay == true)
             autoBr.setActive(s.autoBrightness == true)
+            if (!brBar.isPressed && brBar.progress != s.brightnessPct) brBar.progress = s.brightnessPct
             larger.setLabel("字大 ${s.glassesFontPx}")
 
             val ready = s.linkState == LinkState.READY
@@ -1669,6 +1689,12 @@ class MainActivity : Activity(), ReaderService.UiListener {
         c.addView(seg.root)
         c.addView(hint("图片：切换不闪屏；文字：用提词器，镜腿翻页更灵敏。"), lp(top = 8))
         page.addView(c)
+        page.addView(section("音量键翻页"))
+        val vc = card()
+        val volSeg = Seg(listOf("关", "上一页 / 下一页", "上一行 / 下一行")) { i -> service?.volumeKeys = i; refreshNow() }
+        vc.addView(volSeg.root)
+        vc.addView(hint("音量 + 往前，音量 − 往后，按住连续翻。手机锁屏、萤读在后台时也能用；在阅读时音量键不再调音量，切到看板或收起阅读就恢复。"), lp(top = 8))
+        page.addView(vc)
         val l = listBox()
         val progToggle = Toggle { service?.let { it.showProgress = !it.showProgress }; refreshNow() }
         l.addRow(Row("显示阅读进度") { service?.let { it.showProgress = !it.showProgress }; refreshNow() }.apply { accessory(progToggle.root) }.root)
@@ -1698,6 +1724,7 @@ class MainActivity : Activity(), ReaderService.UiListener {
         loaders.add { reloadLayout() }
         onUpdate(Sub.READ_SET) { s ->
             seg.select(if (s.readerAsImage) 0 else 1)
+            volSeg.select(s.volumeKeys)
             progToggle.set(s.showProgress)
             textPart.visibility = if (s.readerAsImage) View.GONE else View.VISIBLE
             pageRow.value(if (s.displayPage == DisplayPage.PROMPTER) "提词器页" else "笔记页")
@@ -2451,6 +2478,128 @@ class MainActivity : Activity(), ReaderService.UiListener {
         return page
     }
 
+    // =====================================================================
+    // 检查更新：每天一次；有新版就问「跳过 / 立即下载」，下载完交给系统安装器，用户自己点安装
+    // =====================================================================
+
+    private val updatePrefs by lazy { getSharedPreferences("update", Context.MODE_PRIVATE) }
+    private var updateChecking = false
+    /** 等用户在系统设置里允许安装后，再接着装的 APK。 */
+    private var pendingApk: java.io.File? = null
+
+    private val autoUpdateCheck: Boolean get() = updatePrefs.getBoolean("auto", true)
+
+    /** manual = 用户点了「检查更新」：不管今天查没查过、跳没跳过这一版，都查，并且告诉结果。 */
+    private fun checkUpdate(manual: Boolean) {
+        if (updateChecking) return
+        val now = System.currentTimeMillis()
+        if (!manual && (!autoUpdateCheck || now - updatePrefs.getLong("checkedAt", 0L) < 24 * 3600_000L)) return
+        updateChecking = true
+        if (manual) toast("正在检查更新…")
+        Thread {
+            val r = runCatching { Updater.latest() }
+            uiHandler.post {
+                updateChecking = false
+                if (isFinishing || isDestroyed) return@post
+                r.onSuccess { rel ->
+                    updatePrefs.edit().putLong("checkedAt", now).putString("latest", rel.version).apply()
+                    val cur = versionName()
+                    when {
+                        !Updater.newer(rel.version, cur) -> if (manual) toast("已是最新版本（v$cur）")
+                        !manual && updatePrefs.getString("skipped", "") == rel.version -> {}
+                        else -> askUpdate(rel)
+                    }
+                    refreshNow()
+                }.onFailure { if (manual) toast("检查更新失败：${it.message}") }
+            }
+        }.start()
+    }
+
+    private fun askUpdate(rel: Updater.Release) {
+        AlertDialog.Builder(this)
+            .setTitle("发现新版本 v${rel.version}")
+            .setMessage("现在是 v${versionName()}。" + (if (rel.notes.isNotEmpty()) "\n\n" + rel.notes else ""))
+            .setNegativeButton("跳过") { _, _ -> updatePrefs.edit().putString("skipped", rel.version).apply(); toast("这个版本不再提示，可以在「关于」里手动更新") }
+            .setPositiveButton("立即下载") { _, _ -> downloadUpdate(rel) }
+            .show()
+    }
+
+    private fun downloadUpdate(rel: Updater.Release) {
+        val dir = java.io.File(cacheDir, "update").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+        val apk = java.io.File(dir, rel.apkName)
+        val msg = text("正在连接…", 14f, INK)
+        var cancelled = false
+        val dlg = AlertDialog.Builder(this).setTitle("下载 v${rel.version}")
+            .setView(vbox().apply { setPadding(dp(22), dp(10), dp(22), 0); addView(msg) })
+            .setNegativeButton("取消") { _, _ -> cancelled = true }
+            .setCancelable(false).show()
+        var lastPct = -1
+        Thread {
+            val r = runCatching {
+                Updater.download(rel, apk, { got, total ->
+                    val pct = if (total > 0) (got * 100 / total).toInt() else -1
+                    if (pct != lastPct) { lastPct = pct; uiHandler.post { msg.text = if (pct >= 0) "已下载 $pct%" else "已下载 ${got / 1024} KB" } }
+                }, { cancelled })
+            }
+            uiHandler.post {
+                runCatching { dlg.dismiss() }
+                r.onSuccess { installUpdate(apk) }
+                    .onFailure { if (!cancelled) AlertDialog.Builder(this).setTitle("下载失败").setMessage(it.message ?: "").setPositiveButton("知道了", null).show() }
+            }
+        }.start()
+    }
+
+    /** 交给系统安装器：系统会弹出确认，用户点「安装」才装（不会悄悄装）。没允许过萤读安装应用时先去系统设置里开。 */
+    private fun installUpdate(apk: java.io.File) {
+        if (!packageManager.canRequestPackageInstalls()) {
+            pendingApk = apk
+            AlertDialog.Builder(this).setTitle("允许萤读安装更新")
+                .setMessage("下载好了。安卓要求先允许萤读「安装未知应用」，才能把新版交给系统安装：打开后在设置里允许，再回到萤读就会继续。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("去设置") { _, _ ->
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName"))) }
+                        .onFailure { toast("打不开设置：${it.message}") }
+                }.show()
+            return
+        }
+        pendingApk = null
+        runCatching {
+            val pi = packageManager.packageInstaller
+            val params = android.content.pm.PackageInstaller.SessionParams(android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            params.setAppPackageName(packageName)
+            // 一定要用户确认（不静默更新）
+            if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(android.content.pm.PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+            val id = pi.createSession(params)
+            pi.openSession(id).use { s ->
+                s.openWrite("yingdu.apk", 0, apk.length()).use { out -> apk.inputStream().use { it.copyTo(out) }; s.fsync(out) }
+                val i = Intent(this, MainActivity::class.java).setAction(ACTION_INSTALL_STATUS)
+                val flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) android.app.PendingIntent.FLAG_MUTABLE else 0)
+                s.commit(android.app.PendingIntent.getActivity(this, 7, i, flags).intentSender)
+            }
+        }.onFailure { toast("安装失败：${it.message}") }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action != ACTION_INSTALL_STATUS) return
+        when (val st = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, -999)) {
+            android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                @Suppress("DEPRECATION")
+                val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+                if (confirm != null) runCatching { startActivity(confirm) }.onFailure { toast("打不开安装确认：${it.message}") }
+            }
+            android.content.pm.PackageInstaller.STATUS_SUCCESS -> toast("更新好了")
+            android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED -> toast("已取消安装")
+            else -> toast("安装没成功（$st）：" + (intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""))
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 从系统设置回来：允许了就接着装
+        pendingApk?.let { if (packageManager.canRequestPackageInstalls() && it.exists()) installUpdate(it) }
+    }
+
     private fun buildAbout(): View {
         val page = vbox()
         val c = card()
@@ -2463,11 +2612,28 @@ class MainActivity : Activity(), ReaderService.UiListener {
         legal.addRow(Row("隐私说明", chevron = true) { showLegal("隐私说明", Legal.PRIVACY) }.root)
         legal.addRow(Row("开源许可", chevron = true) { openSub(Sub.LICENSES) }.root)
         page.addView(legal)
+        val up = listBox().apply { layoutParams = lp(bottom = 10) }
+        val checkRow = Row("检查更新", chevron = true) { checkUpdate(manual = true) }
+        val autoToggle = Toggle { updatePrefs.edit().putBoolean("auto", !autoUpdateCheck).apply(); refreshNow() }
+        up.addRow(checkRow.root)
+        up.addRow(Row("每天自动检查", "有新版时弹窗问你，选「立即下载」才下载，安装也要你确认") {
+            updatePrefs.edit().putBoolean("auto", !autoUpdateCheck).apply(); refreshNow()
+        }.apply { accessory(autoToggle.root) }.root)
+        page.addView(up)
         page.addView(note("萤读以 Apache License 2.0 开源（github.com/codexmasterme/yingdu）。协议参考开源项目 MentraOS（Apache 2.0）。Opus 编解码用 Concentus（BSD）。" +
             "眼镜点阵字体基于 GNU Unifont 和 Fusion Pixel Font（SIL OFL 1.1）。许可全文见「开源许可」。\n" +
             "数据来源：行情 雅虎财经、腾讯证券、Robinhood、微牛；天气 Open-Meteo（CC BY 4.0）；反向地理编码 BigDataCloud；" +
             "景点 高德地图、Google 地图；景点介绍 百度百科、维基百科（CC BY-SA 4.0）。"))
-        onUpdate(Sub.ABOUT) { v.text = "萤读 " + versionName().let { if (it.isEmpty()) "" else "v$it" } }
+        onUpdate(Sub.ABOUT) {
+            v.text = "萤读 " + versionName().let { if (it.isEmpty()) "" else "v$it" }
+            autoToggle.set(autoUpdateCheck)
+            val latest = updatePrefs.getString("latest", "").orEmpty()
+            checkRow.value(when {
+                latest.isEmpty() -> ""
+                Updater.newer(latest, versionName()) -> "有新版 v$latest"
+                else -> "已是最新"
+            })
+        }
         return page
     }
 

@@ -34,6 +34,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 「我的 → 后台运行」：请系统别对萤读做电池优化（后台常驻，通知和重连不断） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 检查更新：用户选「立即下载」后把新版安装包交给系统安装器（安装前系统会让用户确认） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- usesCleartextTraffic：网络卡片要能访问局域网里 http:// 的服务（例如 Home Assistant） -->
     <application

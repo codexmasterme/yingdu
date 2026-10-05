@@ -24,6 +24,10 @@ enum class DisplayPage { PROMPTER, NOTE }
 interface NimoListener {
     /** 眼镜当前的开关设置（抬头显示、息屏模式、自动亮度），连接后读取、修改后回报。 */
     fun onGlassesSetting(key: Int, on: Boolean) {}
+    /** 眼镜现在的亮度档位（0..16，连接时读到的）。 */
+    fun onBrightnessLevel(level: Int) {}
+    /** 眼镜上报的自动亮度档位（0..16）。 */
+    fun onAutoBrightnessLevel(level: Int) {}
     fun onLinkState(state: LinkState)
     fun onInput(input: GlassesInput)
     fun onBattery(level: Int, charging: Boolean)
@@ -50,7 +54,16 @@ interface NimoListener {
 @SuppressLint("MissingPermission")
 class NimoClient(private val context: Context, private val listener: NimoListener) {
 
+    /** 只发亮度档位（0..16；自动亮度平滑过渡时一步一步发）。 */
+    fun setBrightnessLevel(level: Int) {
+        if (state != LinkState.READY) return
+        sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_BRIGHTNESS,
+            byteArrayOf(level.coerceIn(0, NimoProtocol.MAX_BRIGHTNESS_LEVEL).toByte())))
+    }
+
     companion object {
+        /** 百分比 → 0..16 档（官方是直接舍去小数）。 */
+        fun brightnessLevel(percent: Int): Int = (percent.coerceIn(0, 100) / 100.0 * NimoProtocol.MAX_BRIGHTNESS_LEVEL).toInt()
         private const val TWS_TIMEOUT_MS = 10_000L
         private const val ACK_TIMEOUT_MS = 5_000L
         /** 麦克风特征值的属性句柄（实测）。 */
@@ -353,12 +366,21 @@ class NimoClient(private val context: Context, private val listener: NimoListene
         }
     }
 
-    fun setBrightness(percent: Int) {
+    /**
+     * 调亮度（和官方 app 一样）：总是发亮度等级（0..16 档）；自动亮度开着时再发一条亮度偏移
+     * （新档位 − 原来的档位），自动亮度保持开着，眼镜在自动调节的基础上整体调亮 / 调暗。
+     */
+    fun setBrightness(percent: Int, previousPercent: Int, autoOn: Boolean) {
         if (state != LinkState.READY) return
-        sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_AUTO_BRIGHTNESS, byteArrayOf(0)))
-        val lvl = Math.round(percent.coerceIn(0, 100) / 100.0 * NimoProtocol.MAX_BRIGHTNESS_LEVEL).toInt()
-        sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_BRIGHTNESS, byteArrayOf(lvl.toByte())))
+        val lvl = brightnessLevel(percent)
+        setBrightnessLevel(lvl)
+        if (autoOn) {
+            val offset = (lvl - brightnessLevel(previousPercent)).coerceIn(-128, 127)
+            sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_BRIGHTNESS_OFFSET, byteArrayOf(offset.toByte())))
+            log("自动亮度开着：亮度偏移 $offset（新 $lvl 档）")
+        }
     }
+
 
     // ---------- 连接 ----------
 
@@ -549,7 +571,7 @@ class NimoClient(private val context: Context, private val listener: NimoListene
             NimoProtocol.CMD_SET_PARAMETER, NimoProtocol.SET_PHONE_TYPE,
             byteArrayOf(NimoProtocol.PHONE_TYPE_OTHER.toByte()), needsAck = false))
         sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_GET_PARAMETER, NimoProtocol.GET_VERSION))
-        for (k in listOf(NimoProtocol.SET_HEADUP_DISPLAY, NimoProtocol.SET_DISPLAY_OFF, NimoProtocol.SET_AUTO_BRIGHTNESS))
+        for (k in listOf(NimoProtocol.SET_HEADUP_DISPLAY, NimoProtocol.SET_DISPLAY_OFF, NimoProtocol.SET_AUTO_BRIGHTNESS, NimoProtocol.SET_BRIGHTNESS))
             sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_GET_PARAMETER, k))
         pollBattery()
         if (needUnblankOnConnect) {
@@ -846,6 +868,7 @@ class NimoClient(private val context: Context, private val listener: NimoListene
                     // 心跳里的 TWS 字节位置没核实过：只在握手时参考；连上以后只认眼镜专门发的 TWS 状态上报（key 3），免得误判断连、反复重开页面
                     NimoProtocol.BUSINESS_HEARTBEAT -> if (v.size >= 10 && state == LinkState.HANDSHAKING) onTws((v[8].toInt() and 0xFF) >= 1)
                     NimoProtocol.BUSINESS_BATTERY -> if (v.size >= 4) battery(v)
+                    NimoProtocol.BUSINESS_AUTO_BRIGHTNESS -> if (v.isNotEmpty()) listener.onAutoBrightnessLevel((v[0].toInt() and 0xFF).coerceIn(0, NimoProtocol.MAX_BRIGHTNESS_LEVEL))
                 }
             }
         }
@@ -1002,6 +1025,10 @@ class NimoClient(private val context: Context, private val listener: NimoListene
             NimoProtocol.GET_TWS_STATUS -> if (data.isNotEmpty()) onTws((data[0].toInt() and 0xFF) >= 1)
             NimoProtocol.SET_HEADUP_DISPLAY, NimoProtocol.SET_DISPLAY_OFF, NimoProtocol.SET_AUTO_BRIGHTNESS ->
                 if (data.isNotEmpty()) listener.onGlassesSetting(key, data[0].toInt() != 0)
+            NimoProtocol.SET_BRIGHTNESS -> if (data.isNotEmpty()) {
+                val lvl = (data[0].toInt() and 0xFF).coerceIn(0, NimoProtocol.MAX_BRIGHTNESS_LEVEL)
+                log("眼镜亮度：$lvl 档"); listener.onBrightnessLevel(lvl)
+            }
             NimoProtocol.GET_VERSION -> if (data.size >= 4) {
                 val v = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8) or
                     ((data[2].toInt() and 0xFF) shl 16) or ((data[3].toInt() and 0xFF) shl 24)
